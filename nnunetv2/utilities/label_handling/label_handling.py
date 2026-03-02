@@ -20,11 +20,12 @@ if TYPE_CHECKING:
 
 class LabelManager(object):
     def __init__(self, label_dict: dict, regions_class_order: Union[List[int], None], force_use_labels: bool = False,
-                 inference_nonlin=None):
+                 inference_nonlin=None, multilabel: bool = False):
         self._sanity_check(label_dict)
         self.label_dict = label_dict
         self.regions_class_order = regions_class_order
         self._force_use_labels = force_use_labels
+        self._has_multilabel: bool = multilabel
 
         if force_use_labels:
             self._has_regions = False
@@ -44,7 +45,7 @@ class LabelManager(object):
                                       'Sorry bro.'
 
         if inference_nonlin is None:
-            self.inference_nonlin = torch.sigmoid if self.has_regions else softmax_helper_dim0
+            self.inference_nonlin = torch.sigmoid if (self.has_regions or self.has_multilabel) else softmax_helper_dim0
         else:
             self.inference_nonlin = inference_nonlin
 
@@ -110,6 +111,10 @@ class LabelManager(object):
         return self._has_regions
 
     @property
+    def has_multilabel(self) -> bool:
+        return self._has_multilabel
+
+    @property
     def has_ignore_label(self) -> bool:
         return self.ignore_label is not None
 
@@ -161,7 +166,14 @@ class LabelManager(object):
             f'got {predicted_probabilities.shape[0]}. Remember that predicted_probabilities should have shape ' \
             f'(c, x, y(, z)).'
 
-        if self.has_regions:
+        if self.has_multilabel:
+            # Return (C, x, y, z) binary mask — each channel thresholded independently.
+            # Voxels can be active in multiple channels simultaneously.
+            if isinstance(predicted_probabilities, np.ndarray):
+                segmentation = (predicted_probabilities > 0.5).astype(np.uint8)
+            else:
+                segmentation = (predicted_probabilities > 0.5).to(torch.uint8)
+        elif self.has_regions:
             if isinstance(predicted_probabilities, np.ndarray):
                 segmentation = np.zeros(predicted_probabilities.shape[1:], dtype=np.uint16)
             else:
@@ -213,7 +225,7 @@ class LabelManager(object):
             if isinstance(predicted_probabilities, np.ndarray) else \
             torch.zeros((predicted_probabilities.shape[0], *original_shape), dtype=predicted_probabilities.dtype)
 
-        if not self.has_regions:
+        if not self.has_regions and not self.has_multilabel:
             probs_reverted_cropping[0] = 1
 
         probs_reverted_cropping = insert_crop_into_image(probs_reverted_cropping, predicted_probabilities, bbox)
@@ -239,7 +251,9 @@ class LabelManager(object):
 
     @property
     def num_segmentation_heads(self):
-        if self.has_regions:
+        if self.has_multilabel:
+            return len(self.foreground_labels)
+        elif self.has_regions:
             return len(self.foreground_regions)
         else:
             return len(self.all_labels)

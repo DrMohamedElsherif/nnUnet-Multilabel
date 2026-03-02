@@ -315,6 +315,7 @@ class PlansManager(object):
     def get_label_manager(self, dataset_json: dict, **kwargs) -> LabelManager:
         return self.label_manager_class(label_dict=dataset_json['labels'],
                                         regions_class_order=dataset_json.get('regions_class_order'),
+                                        multilabel=dataset_json.get('multilabel', False),
                                         **kwargs)
 
     @property

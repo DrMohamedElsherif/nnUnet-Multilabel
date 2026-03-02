@@ -42,9 +42,20 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
     del predicted_logits
 
     # put segmentation in bbox (revert cropping)
-    segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
-                                              dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16)
-    segmentation_reverted_cropping = insert_crop_into_image(segmentation_reverted_cropping, segmentation, properties_dict['bbox_used_for_cropping'])
+    if label_manager.has_multilabel:
+        # multilabel: segmentation is (C, z, y, x) binary
+        n_classes = segmentation.shape[0]
+        segmentation_reverted_cropping = np.zeros(
+            (n_classes, *properties_dict['shape_before_cropping']), dtype=np.uint8)
+        for c in range(n_classes):
+            segmentation_reverted_cropping[c] = insert_crop_into_image(
+                np.zeros(properties_dict['shape_before_cropping'], dtype=np.uint8),
+                segmentation[c] if isinstance(segmentation, np.ndarray) else segmentation[c].cpu().numpy(),
+                properties_dict['bbox_used_for_cropping'])
+    else:
+        segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
+                                                  dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16)
+        segmentation_reverted_cropping = insert_crop_into_image(segmentation_reverted_cropping, segmentation, properties_dict['bbox_used_for_cropping'])
     del segmentation
 
     # segmentation may be torch.Tensor but we continue with numpy
@@ -52,7 +63,12 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         segmentation_reverted_cropping = segmentation_reverted_cropping.cpu().numpy()
 
     # revert transpose
-    segmentation_reverted_cropping = segmentation_reverted_cropping.transpose(plans_manager.transpose_backward)
+    if label_manager.has_multilabel:
+        # keep channel axis (0) fixed, transpose only spatial axes
+        segmentation_reverted_cropping = segmentation_reverted_cropping.transpose(
+            [0] + [i + 1 for i in plans_manager.transpose_backward])
+    else:
+        segmentation_reverted_cropping = segmentation_reverted_cropping.transpose(plans_manager.transpose_backward)
     if return_probabilities:
         # revert cropping
         predicted_probabilities = label_manager.revert_cropping_on_probabilities(predicted_probabilities,

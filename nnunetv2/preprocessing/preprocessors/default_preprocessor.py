@@ -98,23 +98,29 @@ class DefaultPreprocessor(object):
             # with a LabelManager Instance in this function because that's all its used for. Dunno what's better.
             # LabelManager is pretty light computation-wise.
             label_manager = plans_manager.get_label_manager(dataset_json)
-            collect_for_this = label_manager.foreground_regions if label_manager.has_regions \
-                else label_manager.foreground_labels
 
-            # when using the ignore label we want to sample only from annotated regions. Therefore we also need to
-            # collect samples uniformly from all classes (incl background)
-            if label_manager.has_ignore_label:
-                collect_for_this.append([-1] + label_manager.all_labels)
+            if label_manager.has_multilabel:
+                # seg is (C, z, y, x) binary with -1/0/1 values.
+                # Sample per-channel: each channel corresponds to one foreground label.
+                properties['class_locations'] = self._sample_foreground_locations_multilabel(
+                    seg, label_manager.foreground_labels, verbose=self.verbose)
+            else:
+                collect_for_this = label_manager.foreground_regions if label_manager.has_regions \
+                    else label_manager.foreground_labels
 
-            # no need to filter background in regions because it is already filtered in handle_labels
-            # print(all_labels, regions)
-            properties['class_locations'] = self._sample_foreground_locations(seg, collect_for_this,
-                                                                                   verbose=self.verbose)
+                # when using the ignore label we want to sample only from annotated regions. Therefore we also need to
+                # collect samples uniformly from all classes (incl background)
+                if label_manager.has_ignore_label:
+                    collect_for_this.append([-1] + label_manager.all_labels)
+
+                # no need to filter background in regions because it is already filtered in handle_labels
+                properties['class_locations'] = self._sample_foreground_locations(seg, collect_for_this,
+                                                                                       verbose=self.verbose)
             seg = self.modify_seg_fn(seg, plans_manager, dataset_json, configuration_manager)
         if np.max(seg) > 127:
             seg = seg.astype(np.int16)
         else:
-            seg = seg.astype(np.int8)
+            seg = seg.astype(np.int8)  # covers multilabel binary (-1/0/1) and single-label
         return data, seg, properties
 
     def run_case(self, image_files: List[str], seg_file: Union[str, None], plans_manager: PlansManager,
@@ -332,6 +338,48 @@ class DefaultPreprocessor(object):
     #         seg = seg[~mask]
     #         foreground_coords = foreground_coords[~mask]
     #     return class_locs
+
+    @staticmethod
+    def _sample_foreground_locations_multilabel(
+            seg: np.ndarray,
+            foreground_labels: List[int],
+            seed: int = 1234,
+            verbose: bool = False,
+            min_num_samples: int = 10000,
+            min_percent_coverage: float = 0.01,
+    ) -> dict:
+        """
+        For multilabel segmentation where seg has shape (C, z, y, x) and binary values
+        (-1 = outside body, 0 = background inside body, 1 = class present).
+        foreground_labels[i] is the class label for channel i.
+        Returns class_locations in the same format as _sample_foreground_locations:
+        dict mapping label -> array of shape (N, 4) where each row is (0, z, y, x).
+        The leading 0 matches the single-channel convention expected by get_bbox().
+        """
+        rndst = np.random.RandomState(seed)
+        class_locs = {}
+        for i, lbl in enumerate(foreground_labels):
+            channel = seg[i]  # shape (z, y, x), values -1/0/1
+            # foreground coords in this channel (value == 1)
+            fg_mask = channel == 1
+            coords = np.argwhere(fg_mask)  # (N, 3)
+            if len(coords) == 0:
+                class_locs[lbl] = []
+                if verbose:
+                    print(f'class {lbl}: 0 foreground voxels')
+                continue
+            n = len(coords)
+            target_num_samples = min(min_num_samples, n)
+            target_num_samples = max(target_num_samples, int(np.ceil(n * min_percent_coverage)))
+            indices = rndst.choice(n, target_num_samples, replace=False)
+            selected = coords[indices]  # (target_num_samples, 3)
+            # prepend a 0 column (channel dim) to match the (channel, z, y, x) convention
+            # used by get_bbox: selected_voxel[i+1] for i in range(dim)
+            channel_col = np.zeros((len(selected), 1), dtype=selected.dtype)
+            class_locs[lbl] = np.concatenate([channel_col, selected], axis=1)
+            if verbose:
+                print(f'class {lbl}: {target_num_samples} sampled foreground locations')
+        return class_locs
 
     def _normalize(self, data: np.ndarray, seg: np.ndarray, configuration_manager: ConfigurationManager,
                    foreground_intensity_properties_per_channel: dict) -> np.ndarray:

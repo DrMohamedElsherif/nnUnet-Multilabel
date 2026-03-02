@@ -1,5 +1,8 @@
+from batchgenerators.utilities.file_and_folder_operations import join, load_json, save_json
 from nnunetv2.configuration import default_num_processes
 from nnunetv2.experiment_planning.plan_and_preprocess_api import extract_fingerprints, plan_experiments, preprocess
+from nnunetv2.paths import nnUNet_raw
+from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
 
 
 def extract_fingerprint_entry():
@@ -94,7 +97,18 @@ def preprocess_entry():
     parser.add_argument('--verbose', required=False, action='store_true',
                         help='Set this to print a lot of stuff. Useful for debugging. Will disable progress bar! '
                              'Recommended for cluster environments')
+    parser.add_argument('--multilabel', action='store_true', required=False,
+                        help='[OPTIONAL] Set "multilabel": true in dataset.json to enable multilabel segmentation mode.')
     args, unrecognized_args = parser.parse_known_args()
+    if args.multilabel:
+        for d in args.d:
+            dname = maybe_convert_to_dataset_name(d)
+            dj_path = join(nnUNet_raw, dname, 'dataset.json')
+            dj = load_json(dj_path)
+            if not dj.get('multilabel', False):
+                dj['multilabel'] = True
+                save_json(dj, dj_path)
+                print(f'[multilabel] Set "multilabel": true in {dj_path}')
     if args.np is None:
         default_np = {"2d": 8, "3d_fullres": 4, "3d_lowres": 8}
         np = [default_np[c] if c in default_np.keys() else 4 for c in args.c]
@@ -173,7 +187,19 @@ def plan_and_preprocess_entry():
     parser.add_argument('--verbose', required=False, action='store_true',
                         help='Set this to print a lot of stuff. Useful for debugging. Will disable progress bar! '
                              'Recommended for cluster environments')
+    parser.add_argument('--multilabel', action='store_true', required=False,
+                        help='[OPTIONAL] Set "multilabel": true in dataset.json to enable multilabel segmentation mode.')
     args = parser.parse_args()
+
+    if args.multilabel:
+        for d in args.d:
+            dname = maybe_convert_to_dataset_name(d)
+            dj_path = join(nnUNet_raw, dname, 'dataset.json')
+            dj = load_json(dj_path)
+            if not dj.get('multilabel', False):
+                dj['multilabel'] = True
+                save_json(dj, dj_path)
+                print(f'[multilabel] Set "multilabel": true in {dj_path}')
 
     # fingerprint extraction
     print("Fingerprint extraction...")

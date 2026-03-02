@@ -112,21 +112,65 @@ class SimpleITKIO(BaseReaderWriter):
         return np.vstack(images, dtype=np.float32, casting='unsafe'), dict
 
     def read_seg(self, seg_fname: str) -> Tuple[np.ndarray, dict]:
-        return self.read_images((seg_fname, ))
+        itk_image = sitk.ReadImage(seg_fname)
+        npy = sitk.GetArrayFromImage(itk_image)
+        spacing = list(np.abs(list(itk_image.GetSpacing())[::-1]))
+        props = {
+            'sitk_stuff': {
+                'spacing': itk_image.GetSpacing(),
+                'origin': itk_image.GetOrigin(),
+                'direction': itk_image.GetDirection(),
+            },
+            'spacing': spacing
+        }
+        if npy.ndim == 3:
+            # standard single-label segmentation: (z, y, x) -> (1, z, y, x)
+            seg = npy[None].astype(np.int16)
+        elif npy.ndim == 4:
+            # multilabel segmentation: sitk returns (C, z, y, x) for 4D NIfTI
+            # each channel is a binary mask for one class
+            seg = npy.astype(np.int16)
+            props['spacing'] = spacing[1:]  # drop the 4th (channel) dimension from spacing
+        else:
+            raise RuntimeError(f'Unexpected seg dimensionality {npy.ndim} in {seg_fname}')
+        return seg, props
 
     def write_seg(self, seg: np.ndarray, output_fname: str, properties: dict) -> None:
-        assert seg.ndim == 3, 'segmentation must be 3d. If you are exporting a 2d segmentation, please provide it as shape 1,x,y'
-        output_dimension = len(properties['sitk_stuff']['spacing'])
-        assert 1 < output_dimension < 4
-        if output_dimension == 2:
-            seg = seg[0]
-
-        itk_image = sitk.GetImageFromArray(seg.astype(np.uint8 if np.max(seg) < 255 else np.uint16, copy=False))
-        itk_image.SetSpacing(properties['sitk_stuff']['spacing'])
-        itk_image.SetOrigin(properties['sitk_stuff']['origin'])
-        itk_image.SetDirection(properties['sitk_stuff']['direction'])
-
-        sitk.WriteImage(itk_image, output_fname, True)
+        if seg.ndim == 4:
+            # multilabel: (C, z, y, x) -> write as 4D NIfTI via nibabel to avoid
+            # SimpleITK direction complications with the 4th (channel) dimension.
+            import nibabel as nib
+            # (C, z, y, x) -> (x, y, z, C) for NIfTI convention
+            seg_out = seg.transpose((3, 2, 1, 0)).astype(np.uint8, copy=False)
+            # Reconstruct affine from sitk spacing/origin/direction.
+            # When reading a 4D file, sitk stores a 4x4 direction — take only the 3x3 spatial block.
+            raw_spacing = properties['sitk_stuff']['spacing']
+            spacing = raw_spacing[:3]  # first 3 are spatial (x, y, z in sitk order)
+            origin = properties['sitk_stuff']['origin'][:3]
+            raw_direction = properties['sitk_stuff']['direction']
+            n = int(len(raw_direction) ** 0.5)  # 3 or 4
+            d_full = np.array(raw_direction).reshape(n, n)
+            d = d_full[:3, :3]
+            affine = np.eye(4)
+            affine[:3, :3] = d * np.array(spacing)
+            affine[:3, 3] = origin
+            # ITK stores coordinates in LPS; NIfTI/nibabel expects RAS.
+            # Convert by negating the x and y rows.
+            affine[0] *= -1
+            affine[1] *= -1
+            nib_img = nib.Nifti1Image(seg_out, affine=affine)
+            nib.save(nib_img, output_fname)
+        else:
+            assert seg.ndim == 3, 'segmentation must be 3d. If you are exporting a 2d segmentation, please provide it as shape 1,x,y'
+            output_dimension = len(properties['sitk_stuff']['spacing'])
+            assert 1 < output_dimension < 4
+            if output_dimension == 2:
+                seg = seg[0]
+            itk_image = sitk.GetImageFromArray(seg.astype(np.uint8 if np.max(seg) < 255 else np.uint16, copy=False))
+            itk_image.SetSpacing(properties['sitk_stuff']['spacing'])
+            itk_image.SetOrigin(properties['sitk_stuff']['origin'])
+            itk_image.SetDirection(properties['sitk_stuff']['direction'])
+            sitk.WriteImage(itk_image, output_fname, True)
 
 
 class SimpleITKIOWithReorient(SimpleITKIO):
@@ -219,6 +263,10 @@ class SimpleITKIOWithReorient(SimpleITKIO):
         return np.vstack(images, dtype=np.float32, casting='unsafe'), dict
 
     def write_seg(self, seg, output_fname, properties):
+        if seg.ndim == 4:
+            # multilabel: delegate to parent which handles 4D
+            SimpleITKIO.write_seg(self, seg, output_fname, properties)
+            return
         assert seg.ndim == 3, 'segmentation must be 3d. If you are exporting a 2d segmentation, please provide it as shape 1,x,y'
         output_dimension = len(properties['sitk_stuff']['spacing'])
         assert 1 < output_dimension < 4

@@ -97,15 +97,20 @@ def check_cases(image_files: List[str], label_file: str, expected_num_channels: 
     if 'sitk_stuff' in properties_image.keys():
         # this image was read with SimpleITKIO
         # spacing has already been checked, only check direction and origin
-        origin_image = properties_image['sitk_stuff']['origin']
-        origin_seg = properties_seg['sitk_stuff']['origin']
+        origin_image = np.array(properties_image['sitk_stuff']['origin'])[:3]
+        origin_seg = np.array(properties_seg['sitk_stuff']['origin'])[:3]
         if not np.allclose(origin_image, origin_seg):
             print('Warning: Origin mismatch between segmentation and corresponding images. \nOrigin images: %s. '
                   '\nOrigin seg: %s. \nImage files: %s. \nSeg file: %s\n' %
                   (origin_image, origin_seg, image_files, label_file))
-        direction_image = properties_image['sitk_stuff']['direction']
-        direction_seg = properties_seg['sitk_stuff']['direction']
-        if not np.allclose(direction_image, direction_seg):
+        direction_image = np.array(properties_image['sitk_stuff']['direction'])
+        direction_seg = np.array(properties_seg['sitk_stuff']['direction'])
+        # For 4D seg files the direction matrix is 4x4 vs 3x3 for the image — compare only the 3x3 spatial block
+        n = int(len(direction_image) ** 0.5)
+        m = int(len(direction_seg) ** 0.5)
+        dir_img_3x3 = direction_image.reshape(n, n)[:3, :3].ravel()
+        dir_seg_3x3 = direction_seg.reshape(m, m)[:3, :3].ravel()
+        if not np.allclose(dir_img_3x3, dir_seg_3x3):
             print('Warning: Direction mismatch between segmentation and corresponding images. \nDirection images: %s. '
                   '\nDirection seg: %s. \nImage files: %s. \nSeg file: %s\n' %
                   (direction_image, direction_seg, image_files, label_file))

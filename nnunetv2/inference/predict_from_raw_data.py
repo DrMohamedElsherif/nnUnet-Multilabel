@@ -66,7 +66,8 @@ class nnUNetPredictor(object):
 
     def initialize_from_trained_model_folder(self, model_training_output_dir: str,
                                              use_folds: Union[Tuple[Union[int, str]], None],
-                                             checkpoint_name: str = 'checkpoint_final.pth'):
+                                             checkpoint_name: str = 'checkpoint_final.pth',
+                                             override_multilabel: bool = False):
         """
         This is used when making predictions with a trained model
         """
@@ -74,6 +75,8 @@ class nnUNetPredictor(object):
             use_folds = nnUNetPredictor.auto_detect_available_folds(model_training_output_dir, checkpoint_name)
 
         dataset_json = load_json(join(model_training_output_dir, 'dataset.json'))
+        if override_multilabel:
+            dataset_json['multilabel'] = True
         plans = load_json(join(model_training_output_dir, 'plans.json'))
         plans_manager = PlansManager(plans)
 
@@ -821,6 +824,8 @@ def predict_entry_point_modelfolder():
     parser.add_argument('--disable_progress_bar', action='store_true', required=False, default=False,
                         help='Set this flag to disable progress bar. Recommended for HPC environments (non interactive '
                              'jobs)')
+    parser.add_argument('--multilabel', action='store_true', required=False,
+                        help='[OPTIONAL] Override model dataset.json to enable multilabel segmentation mode.')
 
     print(
         "\n#######################################################################\nPlease cite the following paper "
@@ -858,7 +863,8 @@ def predict_entry_point_modelfolder():
                                 verbose=args.verbose,
                                 allow_tqdm=not args.disable_progress_bar,
                                 verbose_preprocessing=args.verbose)
-    predictor.initialize_from_trained_model_folder(args.m, args.f, args.chk)
+    predictor.initialize_from_trained_model_folder(args.m, args.f, args.chk,
+                                                   override_multilabel=args.multilabel)
     predictor.predict_from_files(args.i, args.o, save_probabilities=args.save_probabilities,
                                  overwrite=not args.continue_prediction,
                                  num_processes_preprocessing=args.npp,
@@ -930,6 +936,8 @@ def predict_entry_point():
     parser.add_argument('--disable_progress_bar', action='store_true', required=False, default=False,
                         help='Set this flag to disable progress bar. Recommended for HPC environments (non interactive '
                              'jobs)')
+    parser.add_argument('--multilabel', action='store_true', required=False,
+                        help='[OPTIONAL] Override model dataset.json to enable multilabel segmentation mode.')
 
     print(
         "\n#######################################################################\nPlease cite the following paper "
@@ -975,7 +983,8 @@ def predict_entry_point():
     predictor.initialize_from_trained_model_folder(
         model_folder,
         args.f,
-        checkpoint_name=args.chk
+        checkpoint_name=args.chk,
+        override_multilabel=args.multilabel
     )
     
     run_sequential = args.nps == 0 and args.npp == 0

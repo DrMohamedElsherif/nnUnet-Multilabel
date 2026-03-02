@@ -89,12 +89,32 @@ class NibabelIO(BaseReaderWriter):
         return np.vstack(images, dtype=np.float32, casting='unsafe'), dict
 
     def read_seg(self, seg_fname: str) -> Tuple[np.ndarray, dict]:
-        return self.read_images((seg_fname,))
+        nib_image = nibabel.load(seg_fname)
+        original_affine = nib_image.affine
+        props = {
+            'nibabel_stuff': {'original_affine': original_affine},
+            'spacing': [float(i) for i in nib_image.header.get_zooms()[::-1]]
+        }
+        data = nib_image.get_fdata()
+        if data.ndim == 3:
+            # standard single-label: (x, y, z) -> (z, y, x) -> (1, z, y, x)
+            seg = data.transpose((2, 1, 0))[None].astype(np.int16)
+        elif data.ndim == 4:
+            # multilabel: (x, y, z, C) -> (C, z, y, x)
+            seg = data.transpose((3, 2, 1, 0)).astype(np.int16)
+            props['spacing'] = props['spacing'][1:]  # drop the 4th dim spacing
+        else:
+            raise RuntimeError(f'Unexpected seg dimensionality {data.ndim} in {seg_fname}')
+        return seg, props
 
     def write_seg(self, seg: np.ndarray, output_fname: str, properties: dict) -> None:
-        # revert transpose
-        seg = seg.transpose((2, 1, 0)).astype(np.uint8 if np.max(seg) < 255 else np.uint16, copy=False)
-        seg_nib = nibabel.Nifti1Image(seg, affine=properties['nibabel_stuff']['original_affine'])
+        if seg.ndim == 4:
+            # multilabel: (C, z, y, x) -> (x, y, z, C)
+            seg_out = seg.transpose((3, 2, 1, 0)).astype(np.uint8, copy=False)
+        else:
+            # standard: (z, y, x) -> (x, y, z)
+            seg_out = seg.transpose((2, 1, 0)).astype(np.uint8 if np.max(seg) < 255 else np.uint16, copy=False)
+        seg_nib = nibabel.Nifti1Image(seg_out, affine=properties['nibabel_stuff']['original_affine'])
         nibabel.save(seg_nib, output_fname)
 
 
@@ -171,13 +191,36 @@ class NibabelIOWithReorient(BaseReaderWriter):
         return np.vstack(images, dtype=np.float32, casting='unsafe'), dict
 
     def read_seg(self, seg_fname: str) -> Tuple[np.ndarray, dict]:
-        return self.read_images((seg_fname,))
+        nib_image = nibabel.load(seg_fname)
+        original_affine = nib_image.affine
+        reoriented_image = nib_image.as_reoriented(io_orientation(original_affine))
+        reoriented_affine = reoriented_image.affine
+        props = {
+            'nibabel_stuff': {
+                'original_affine': original_affine,
+                'reoriented_affine': reoriented_affine,
+            },
+            'spacing': [float(i) for i in reoriented_image.header.get_zooms()[::-1]]
+        }
+        data = reoriented_image.get_fdata()
+        if data.ndim == 3:
+            seg = data.transpose((2, 1, 0))[None].astype(np.int16)
+        elif data.ndim == 4:
+            # multilabel: (x, y, z, C) -> (C, z, y, x)
+            seg = data.transpose((3, 2, 1, 0)).astype(np.int16)
+            props['spacing'] = props['spacing'][1:]  # drop 4th dim spacing
+        else:
+            raise RuntimeError(f'Unexpected seg dimensionality {data.ndim} in {seg_fname}')
+        return seg, props
 
     def write_seg(self, seg: np.ndarray, output_fname: str, properties: dict) -> None:
-        # revert transpose
-        seg = seg.transpose((2, 1, 0)).astype(np.uint8 if np.max(seg) < 255 else np.uint16, copy=False)
-
-        seg_nib = nibabel.Nifti1Image(seg, affine=properties['nibabel_stuff']['reoriented_affine'])
+        if seg.ndim == 4:
+            # multilabel: (C, z, y, x) -> (x, y, z, C)
+            seg_out = seg.transpose((3, 2, 1, 0)).astype(np.uint8, copy=False)
+            seg_nib = nibabel.Nifti1Image(seg_out, affine=properties['nibabel_stuff']['reoriented_affine'])
+        else:
+            seg_out = seg.transpose((2, 1, 0)).astype(np.uint8 if np.max(seg) < 255 else np.uint16, copy=False)
+            seg_nib = nibabel.Nifti1Image(seg_out, affine=properties['nibabel_stuff']['reoriented_affine'])
         # Solution from https://github.com/nipy/nibabel/issues/1063#issuecomment-967124057
         img_ornt = io_orientation(properties['nibabel_stuff']['original_affine'])
         ras_ornt = axcodes2ornt("RAS")

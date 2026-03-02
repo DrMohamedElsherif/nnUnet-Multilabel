@@ -177,8 +177,11 @@ def compute_metrics_on_folder(folder_ref: str, folder_pred: str, output_file: st
 def compute_metrics_on_folder2(folder_ref: str, folder_pred: str, dataset_json_file: str, plans_file: str,
                                output_file: str = None,
                                num_processes: int = default_num_processes,
-                               chill: bool = False):
+                               chill: bool = False,
+                               override_multilabel: bool = False):
     dataset_json = load_json(dataset_json_file)
+    if override_multilabel:
+        dataset_json['multilabel'] = True
     # get file ending
     file_ending = dataset_json['file_ending']
 
@@ -226,8 +229,11 @@ def evaluate_folder_entry_point():
     parser.add_argument('-np', type=int, required=False, default=default_num_processes,
                         help=f'number of processes used. Optional. Default: {default_num_processes}')
     parser.add_argument('--chill', action='store_true', help='dont crash if folder_pred does not have all files that are present in folder_gt')
+    parser.add_argument('--multilabel', action='store_true', required=False,
+                        help='[OPTIONAL] Override dataset.json to enable multilabel segmentation mode.')
     args = parser.parse_args()
-    compute_metrics_on_folder2(args.gt_folder, args.pred_folder, args.djfile, args.pfile, args.o, args.np, chill=args.chill)
+    compute_metrics_on_folder2(args.gt_folder, args.pred_folder, args.djfile, args.pfile, args.o, args.np,
+                               chill=args.chill, override_multilabel=args.multilabel)
 
 
 def evaluate_simple_entry_point():
