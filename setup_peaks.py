@@ -17,8 +17,11 @@ They require specific handling at every stage of the pipeline:
                   no intensity augmentations (noise, blur, gamma are meaningless),
                   mirroring MUST negate the flipped vector component (sign correction)
 
-  Architecture    same as multilabel (sigmoid + BCE/Dice, 4D NIfTI I/O)
-                  because peaks data always uses multilabel segmentation targets
+  Architecture    --peaks and --multilabel are INDEPENDENT flags.
+                  --peaks  = vector-aware preprocessing + trainer (NoNorm, linear resample,
+                             PeakSpatialTransform, PeakMirrorTransform)
+                  --multilabel = sigmoid + BCE/Dice loss, 4D NIfTI label I/O
+                  Use both together for the typical tractography use case.
 
 This module documents every file touched and every design decision made.
 """
@@ -116,21 +119,21 @@ nnunetv2/experiment_planning/experiment_planners/default_experiment_planner.py
 
 nnunetv2/experiment_planning/plan_and_preprocess_entrypoints.py
     Added helper function _apply_peaks_flags(dataset_ids):
-        Sets all entries in channel_names to "nonorm" and sets multilabel=True
-        in the raw dataset.json on disk. Runs before fingerprint extraction so
-        the planner sees the correct channel names.
+        Sets all entries in channel_names to "nonorm" in the raw dataset.json
+        on disk. Runs before fingerprint extraction so the planner sees the
+        correct channel names. Does NOT touch the multilabel flag.
 
     preprocess_entry() and plan_and_preprocess_entry():
         Added --peaks flag (action='store_true').
-        When set, calls _apply_peaks_flags() instead of the multilabel-only block
-        (--peaks implies multilabel automatically).
+        Both --peaks and --multilabel are evaluated independently (not elif)
+        so you can combine, use separately, or omit either flag.
 
 nnunetv2/run/run_training.py
     get_trainer_from_args():
         Added peaks: bool = False parameter.
         When peaks=True and trainer_name == 'nnUNetTrainer' (default),
-        automatically switches to 'nnUNetTrainerPeaks' and sets
-        dataset_json['multilabel'] = True in memory.
+        automatically switches to 'nnUNetTrainerPeaks'.
+        The multilabel flag is handled separately and independently.
 
     run_training():
         Added peaks: bool = False, passed through to get_trainer_from_args().
@@ -297,15 +300,20 @@ export nnUNet_results=".../Robins_runs/nnunet_results"
 export nnUNet_compile=0
 
 # 1. Plan & preprocess
-#    --peaks sets channel_names→nonorm, multilabel→true in dataset.json
-#    Planner automatically uses resampling order=1 for nonorm channels
+#    --peaks  → sets channel_names→nonorm (NoNorm + linear resampling)
+#    --multilabel → sets multilabel=true in dataset.json (4D labels, sigmoid loss)
+#    Both flags are independent — combine as needed:
+#      peaks only (single-label targets): --peaks
+#      peaks + multilabel (tractography):  --peaks --multilabel
 nnUNetv2_plan_and_preprocess \\
     -d 5 -c 3d_fullres -np 4 \\
-    --peaks --verify_dataset_integrity
+    --peaks --multilabel --verify_dataset_integrity
 
 # 2. Train
 #    --peaks auto-selects nnUNetTrainerPeaks if no -tr is given
-nnUNetv2_train 5 3d_fullres 0 --peaks
+#    --multilabel overrides dataset_json['multilabel'] in memory (optional
+#    if already written to disk in step 1)
+nnUNetv2_train 5 3d_fullres 0 --peaks --multilabel
 
 # 3. Predict
 #    Dataset.json in the model folder already has multilabel=True from step 1

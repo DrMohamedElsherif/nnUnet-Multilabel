@@ -6,11 +6,14 @@
 # stored as separate NIfTI files _0000.nii.gz ... _0008.nii.gz per subject.
 #
 # Differences from the standard multilabel pipeline:
-#   --peaks flag (instead of --multilabel) controls plan/preprocess and train
-#   -tr nnUNetTrainerPeaks    peak-aware augmentation (rotation with vector
-#                             correction, PeakMirrorTransform, no intensity aug)
-#   channel_names → "nonorm"  injected automatically by --peaks
-#   resampling order = 1      set automatically when all channels are "nonorm"
+#   --peaks    sets channel_names→"nonorm" in dataset.json; auto-selects
+#              nnUNetTrainerPeaks at training time (vector-aware augmentation:
+#              rotation with R applied to vectors, PeakMirrorTransform, no
+#              intensity augmentations). INDEPENDENT of --multilabel.
+#   --multilabel sets multilabel=true in dataset.json (sigmoid loss, 4D labels).
+#              INDEPENDENT of --peaks.
+#   Both flags combined = peaks input + multilabel tractography targets (typical).
+#   resampling order=1 set automatically when all channel names are "nonorm".
 #
 # Usage:
 #   1. Adapt the CONFIG section below.
@@ -97,14 +100,15 @@ STEP="${1:-all}"
 # =============================================================================
 run_preprocess() {
     echo ""
-    echo ">>> [1/4] Plan & Preprocess (--peaks)"
-    echo "    --peaks sets channel_names→nonorm, multilabel→true in dataset.json"
-    echo "    Resampling order=1 (linear) is used automatically for nonorm channels"
+    echo ">>> [1/4] Plan & Preprocess (--peaks --multilabel)"
+    echo "    --peaks      : channel_names->nonorm (NoNorm + linear resampling)"
+    echo "    --multilabel : multilabel=true in dataset.json (sigmoid loss, 4D labels)"
     nnUNetv2_plan_and_preprocess \
         -d "${DATASET_NAME}" \
         -c ${PREPROCESS_CONFIGS} \
         -np "${NP_PREPROCESS}" \
         --peaks \
+        --multilabel \
         --verify_dataset_integrity
     echo "    Done."
 }
@@ -124,7 +128,8 @@ run_train() {
         -p "${PLANS}" \
         -num_gpus "${NUM_GPUS}" \
         -device "${DEVICE}" \
-        --peaks
+        --peaks \
+        --multilabel
     echo "    Training done."
 }
 

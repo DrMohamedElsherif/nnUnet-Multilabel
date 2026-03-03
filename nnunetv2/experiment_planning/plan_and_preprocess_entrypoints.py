@@ -6,7 +6,7 @@ from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_datas
 
 
 def _apply_peaks_flags(dataset_ids):
-    """Set all channel names to 'nonorm' and enable multilabel in raw dataset.json for peaks datasets."""
+    """Set all channel names to 'nonorm' in raw dataset.json (peaks preprocessing flag)."""
     for d in dataset_ids:
         dname = maybe_convert_to_dataset_name(d)
         dj_path = join(nnUNet_raw, dname, 'dataset.json')
@@ -21,12 +21,9 @@ def _apply_peaks_flags(dataset_ids):
             dj['channel_names'] = ch
         else:
             dj['modality'] = ch
-        if not dj.get('multilabel', False):
-            dj['multilabel'] = True
-            changed = True
         if changed:
             save_json(dj, dj_path)
-            print('[peaks] Updated %s: channels->nonorm, multilabel->true' % dj_path)
+            print('[peaks] Updated %s: channel_names -> nonorm' % dj_path)
 
 
 def extract_fingerprint_entry():
@@ -124,11 +121,12 @@ def preprocess_entry():
     parser.add_argument('--multilabel', action='store_true', required=False,
                         help='[OPTIONAL] Set "multilabel": true in dataset.json to enable multilabel segmentation mode.')
     parser.add_argument('--peaks', action='store_true', required=False,
-                        help='[OPTIONAL] Peaks mode: set all channel names to "nonorm" and enable multilabel in dataset.json.')
+                        help='[OPTIONAL] Peaks mode: set all channel names to "nonorm" in dataset.json '
+                             '(enables NoNormalization and linear resampling). Independent of --multilabel.')
     args, unrecognized_args = parser.parse_known_args()
     if args.peaks:
         _apply_peaks_flags(args.d)
-    elif args.multilabel:
+    if args.multilabel:
         for d in args.d:
             dname = maybe_convert_to_dataset_name(d)
             dj_path = join(nnUNet_raw, dname, 'dataset.json')
@@ -218,12 +216,13 @@ def plan_and_preprocess_entry():
     parser.add_argument('--multilabel', action='store_true', required=False,
                         help='[OPTIONAL] Set "multilabel": true in dataset.json to enable multilabel segmentation mode.')
     parser.add_argument('--peaks', action='store_true', required=False,
-                        help='[OPTIONAL] Peaks mode: set all channel names to "nonorm" and enable multilabel in dataset.json.')
+                        help='[OPTIONAL] Peaks mode: set all channel names to "nonorm" in dataset.json '
+                             '(enables NoNormalization and linear resampling). Independent of --multilabel.')
     args = parser.parse_args()
 
     if args.peaks:
         _apply_peaks_flags(args.d)
-    elif args.multilabel:
+    if args.multilabel:
         for d in args.d:
             dname = maybe_convert_to_dataset_name(d)
             dj_path = join(nnUNet_raw, dname, 'dataset.json')

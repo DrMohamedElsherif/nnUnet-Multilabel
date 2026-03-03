@@ -74,8 +74,7 @@ def get_trainer_from_args(dataset_name_or_id: Union[int, str],
             if nnunet_trainer is None:
                 raise RuntimeError('Could not find nnUNetTrainerPeaks. Ensure peak_transforms.py and '
                                    'nnUNetTrainerPeaks.py are in nnunetv2/training/nnUNetTrainer/.')
-        dataset_json['multilabel'] = True
-    elif multilabel:
+    if multilabel:
         dataset_json['multilabel'] = True
     nnunet_trainer = nnunet_trainer(plans=plans, configuration=configuration, fold=fold,
                                     dataset_json=dataset_json, device=device)
@@ -269,7 +268,8 @@ def run_training_entry():
     parser.add_argument('--multilabel', action='store_true', required=False,
                         help='[OPTIONAL] Override dataset.json to enable multilabel segmentation mode.')
     parser.add_argument('--peaks', action='store_true', required=False,
-                        help='[OPTIONAL] Peaks mode: auto-select nnUNetTrainerPeaks and enable multilabel.')
+                        help='[OPTIONAL] Peaks mode: auto-select nnUNetTrainerPeaks (if no -tr given). '
+                             'Independent of --multilabel.')
     args = parser.parse_args()
 
     assert args.device in ['cpu', 'cuda', 'mps'], f'-device must be either cpu, mps or cuda. Other devices are not tested/supported. Got: {args.device}.'
