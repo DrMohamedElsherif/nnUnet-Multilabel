@@ -36,6 +36,7 @@ def get_trainer_from_args(dataset_name_or_id: Union[int, str],
                           plans_identifier: str = 'nnUNetPlans',
                           continue_training: bool = False,
                           multilabel: bool = False,
+                          peaks: bool = False,
                           device: torch.device = torch.device('cuda')):
     # load nnunet class and do sanity checks
     nnunet_trainer = recursive_find_python_class(join(nnunetv2.__path__[0], "training", "nnUNetTrainer"),
@@ -65,7 +66,16 @@ def get_trainer_from_args(dataset_name_or_id: Union[int, str],
     plans = load_json(plans_file)
     plans["continue_training"] = continue_training
     dataset_json = load_json(join(preprocessed_dataset_folder_base, 'dataset.json'))
-    if multilabel:
+    if peaks:
+        if trainer_name == 'nnUNetTrainer':
+            trainer_name = 'nnUNetTrainerPeaks'
+            nnunet_trainer = recursive_find_python_class(join(nnunetv2.__path__[0], "training", "nnUNetTrainer"),
+                                                        trainer_name, 'nnunetv2.training.nnUNetTrainer')
+            if nnunet_trainer is None:
+                raise RuntimeError('Could not find nnUNetTrainerPeaks. Ensure peak_transforms.py and '
+                                   'nnUNetTrainerPeaks.py are in nnunetv2/training/nnUNetTrainer/.')
+        dataset_json['multilabel'] = True
+    elif multilabel:
         dataset_json['multilabel'] = True
     nnunet_trainer = nnunet_trainer(plans=plans, configuration=configuration, fold=fold,
                                     dataset_json=dataset_json, device=device)
@@ -151,6 +161,7 @@ def run_training(dataset_name_or_id: Union[str, int],
                  disable_checkpointing: bool = False,
                  val_with_best: bool = False,
                  multilabel: bool = False,
+                 peaks: bool = False,
                  device: torch.device = torch.device('cuda')):
     if plans_identifier == 'nnUNetPlans':
         print("\n############################\n"
@@ -197,7 +208,7 @@ def run_training(dataset_name_or_id: Union[str, int],
     else:
         nnunet_trainer = get_trainer_from_args(dataset_name_or_id, configuration, fold, trainer_class_name,
                                                plans_identifier, continue_training, multilabel=multilabel,
-                                               device=device)
+                                               peaks=peaks, device=device)
 
         if disable_checkpointing:
             nnunet_trainer.disable_checkpointing = disable_checkpointing
@@ -257,6 +268,8 @@ def run_training_entry():
                          "Use CUDA_VISIBLE_DEVICES=X nnUNetv2_train [...] instead!")
     parser.add_argument('--multilabel', action='store_true', required=False,
                         help='[OPTIONAL] Override dataset.json to enable multilabel segmentation mode.')
+    parser.add_argument('--peaks', action='store_true', required=False,
+                        help='[OPTIONAL] Peaks mode: auto-select nnUNetTrainerPeaks and enable multilabel.')
     args = parser.parse_args()
 
     assert args.device in ['cpu', 'cuda', 'mps'], f'-device must be either cpu, mps or cuda. Other devices are not tested/supported. Got: {args.device}.'
@@ -274,7 +287,7 @@ def run_training_entry():
 
     run_training(args.dataset_name_or_id, args.configuration, args.fold, args.tr, args.p, args.pretrained_weights,
                  args.num_gpus, args.npz, args.c, args.val, args.disable_checkpointing, args.val_best,
-                 multilabel=args.multilabel, device=device)
+                 multilabel=args.multilabel, peaks=args.peaks, device=device)
 
 
 if __name__ == '__main__':

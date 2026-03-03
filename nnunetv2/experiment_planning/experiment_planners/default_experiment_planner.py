@@ -118,10 +118,17 @@ class ExperimentPlanner(object):
         determine_resampling is called within get_plans_for_configuration to allow for different functions for each
         configuration
         """
+        # Use linear (order=1) interpolation for non-intensity data such as peaks/vectors
+        # (identified by all channels being named 'nonorm'). Cubic interpolation can overshoot
+        # and create spurious vector components between voxels for directional data.
+        channel_names = self.dataset_json.get('channel_names', self.dataset_json.get('modality', {}))
+        all_nonorm = all(n.casefold() == 'nonorm' for n in channel_names.values())
+        data_order = 1 if all_nonorm else 3
+
         resampling_data = resample_data_or_seg_to_shape
         resampling_data_kwargs = {
             "is_seg": False,
-            "order": 3,
+            "order": data_order,
             "order_z": 0,
             "force_separate_z": None,
         }
