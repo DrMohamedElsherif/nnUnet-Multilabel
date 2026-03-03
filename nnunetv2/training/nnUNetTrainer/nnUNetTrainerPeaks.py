@@ -4,17 +4,21 @@ nnUNetTrainerPeaks — nnUNet trainer for diffusion MRI fiber orientation peak d
 Key differences from the standard trainer:
 
 1. Augmentation pipeline is adapted for 9-channel peak vector fields:
-   - Rotation is DISABLED: rotating the image would require rotating the stored
-     vector components too, which SpatialTransform does not do.
-   - Scaling is kept: voxel rescaling does not change vector directions.
+   - Rotation is ENABLED via PeakSpatialTransform: the rotation matrix R is applied
+     both to the voxel sampling grid AND to the stored vector component channels,
+     so peak directions stay geometrically consistent with the rotated image.
+   - Scaling is applied to the voxel grid only (scaling does not change directions).
+   - Elastic deformation is disabled by default (correcting vectors would require
+     the full per-voxel Jacobian of the deformation field).
    - All intensity-based augmentations are REMOVED (noise, blur, brightness,
      contrast, simulated low-resolution, gamma) — these have no geometric
      meaning for directional data.
    - MirrorTransform is replaced by PeakMirrorTransform, which negates the
      appropriate vector component channels whenever a spatial axis is flipped.
 
-2. configure_rotation_dummyDA_mirroring sets rotation_for_DA = (0, 0) so that
-   the initial (padded) patch size is not inflated for rotation.
+2. configure_rotation_dummyDA_mirroring_and_inital_patch_size delegates to
+   super() so the initial patch size is correctly inflated to accommodate rotation
+   (standard nnUNet behaviour, no longer suppressed).
 
 Usage:
     nnUNetv2_train <dataset> 3d_fullres 0 -tr nnUNetTrainerPeaks --peaks --multilabel
@@ -27,7 +31,6 @@ from typing import Tuple, List, Union
 import numpy as np
 from batchgeneratorsv2.helpers.scalar_type import RandomScalar
 from batchgeneratorsv2.transforms.base.basic_transform import BasicTransform
-from batchgeneratorsv2.transforms.spatial.spatial import SpatialTransform
 from batchgeneratorsv2.transforms.utils.compose import ComposeTransforms
 from batchgeneratorsv2.transforms.utils.deep_supervision_downsampling import DownsampleSegForDSTransform
 from batchgeneratorsv2.transforms.utils.nnunet_masking import MaskImageTransform
@@ -39,8 +42,7 @@ from batchgeneratorsv2.transforms.utils.random import RandomTransform
 from batchgeneratorsv2.transforms.utils.remove_label import RemoveLabelTansform
 from batchgeneratorsv2.transforms.utils.seg_to_regions import ConvertSegmentationToRegionsTransform
 
-from nnunetv2.training.data_augmentation.peak_transforms import PeakMirrorTransform
-from nnunetv2.training.data_augmentation.compute_initial_patch_size import get_patch_size
+from nnunetv2.training.data_augmentation.peak_transforms import PeakMirrorTransform, PeakSpatialTransform
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 
 
@@ -57,36 +59,17 @@ class nnUNetTrainerPeaks(nnUNetTrainer):
 
     def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
         """
-        Disable rotation (vectors not transformed) and compute a non-inflated
-        initial patch size based on scaling only.
+        Delegate to parent so the initial patch size is correctly inflated for
+        rotation (standard nnUNet behaviour). PeakSpatialTransform will handle
+        vector-consistent rotation.
         """
-        patch_size = self.configuration_manager.patch_size
-        dim = len(patch_size)
+        rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes = \
+            super().configure_rotation_dummyDA_mirroring_and_inital_patch_size()
 
-        if dim == 2:
-            do_dummy_2d_data_aug = False
-            mirror_axes = (0, 1)
-        else:
-            from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import ANISO_THRESHOLD
-            do_dummy_2d_data_aug = (max(patch_size) / patch_size[0]) > ANISO_THRESHOLD
-            mirror_axes = (0, 1, 2)
-
-        # rotation_for_DA = (0, 0) → no rotation, patch padding only for scaling
-        rotation_for_DA = (0., 0.)
-        initial_patch_size = get_patch_size(
-            patch_size[-dim:],
-            rotation_for_DA,
-            rotation_for_DA,
-            rotation_for_DA,
-            (0.85, 1.25),       # same scaling range as default trainer
+        self.print_to_log_file(
+            'nnUNetTrainerPeaks: rotation ENABLED via PeakSpatialTransform '
+            '(peak vectors rotated consistently with the image grid)'
         )
-        if do_dummy_2d_data_aug:
-            initial_patch_size[0] = patch_size[0]
-
-        self.print_to_log_file(f'do_dummy_2d_data_aug: {do_dummy_2d_data_aug}')
-        self.print_to_log_file('nnUNetTrainerPeaks: rotation DISABLED, using PeakMirrorTransform')
-        self.inference_allowed_mirroring_axes = mirror_axes
-
         return rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes
 
     @staticmethod
@@ -104,38 +87,32 @@ class nnUNetTrainerPeaks(nnUNetTrainer):
     ) -> BasicTransform:
         """
         Peaks-adapted augmentation pipeline:
-        - SpatialTransform: scaling only (p_rotation=0), no elastic deformation
+        - PeakSpatialTransform: rotation (with vector correction) + scaling
         - PeakMirrorTransform: spatial flip + vector component sign correction
-        - All intensity augmentations removed
+        - All intensity augmentations removed (noise, blur, brightness, contrast,
+          simulated low-resolution, gamma are meaningless for vector fields)
         """
-        transforms = []
-
-        # Spatial: scaling only, rotation disabled (p_rotation=0)
         if do_dummy_2d_data_aug:
-            from batchgeneratorsv2.transforms.spatial.spatial import Convert3DTo2DTransform, Convert2DTo3DTransform
-            transforms.append(Convert3DTo2DTransform())
-            patch_size_spatial = patch_size[1:]
-        else:
-            patch_size_spatial = patch_size
+            raise RuntimeError(
+                'nnUNetTrainerPeaks does not support dummy 2D data augmentation '
+                '(triggered for highly anisotropic patches). Peak data should be '
+                'approximately isotropic. If this is unexpected, check your dataset '
+                'voxel spacing and patch size.'
+            )
 
-        transforms.append(
-            SpatialTransform(
-                patch_size_spatial,
-                patch_center_dist_from_border=0,
-                random_crop=False,
-                p_elastic_deform=0,
-                p_rotation=0,               # disabled — rotation would mis-orient vectors
-                rotation=rotation_for_DA,
+        transforms = [
+            PeakSpatialTransform(
+                patch_size=patch_size,
+                p_rotation=0.5,
+                rotation=rotation_for_DA,    # range set by planner, typically ±30°
                 p_scaling=0.2,
                 scaling=(0.85, 1.25),
-                p_synchronize_scaling_across_axes=1,
-                bg_style_seg_sampling=False,
+                p_sync_scale=1.0,
+                p_elastic_deform=0.0,        # disabled: elastic deform can't be vector-corrected
+                num_peaks=nnUNetTrainerPeaks.NUM_PEAKS,
+                num_components=nnUNetTrainerPeaks.NUM_COMPONENTS,
             )
-        )
-
-        if do_dummy_2d_data_aug:
-            from batchgeneratorsv2.transforms.spatial.spatial import Convert2DTo3DTransform
-            transforms.append(Convert2DTo3DTransform())
+        ]
 
         # Peak-aware mirroring (replaces standard MirrorTransform)
         if mirror_axes is not None and len(mirror_axes) > 0:
