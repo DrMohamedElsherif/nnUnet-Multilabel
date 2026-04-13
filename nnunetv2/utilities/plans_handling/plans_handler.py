@@ -339,4 +339,4 @@ if __name__ == '__main__':
     # now get plans and configuration managers
     plans_manager = PlansManager(plans)
     configuration_manager = plans_manager.get_configuration('3d_fullres_bs4')
-    print(configuration_manager)  # look for batch size 4
+    print(configuration_manager)   # look for batch size 4
