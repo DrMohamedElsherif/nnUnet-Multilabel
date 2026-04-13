@@ -290,7 +290,7 @@ def convert_labelmap_to_one_hot(segmentation: Union[np.ndarray, torch.Tensor],
                              dtype=output_dtype if output_dtype is not None else (torch.uint8 if max(all_labels) < 255 else torch.uint16),
                              device=segmentation.device)
         # variant 1, 2x faster than 2
-        result.scatter_(0, segmentation[None].long(), 1)  # why does this have to be long!?
+        result.scatter_(0, segmentation[None].long(), 1)   # why does this have to be long!?
         # variant 2, slower than 1
         # for i, l in enumerate(all_labels):
         #     result[i] = segmentation == l
