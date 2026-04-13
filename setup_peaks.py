@@ -33,7 +33,7 @@ This module documents every file touched and every design decision made.
 
 CHANGED_FILES = """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  FILES CHANGED FOR PEAKS SUPPORT                                            ║
+║  FILES CHANGED FOR PEAKS SUPPORT                                             ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ── NEW FILES ────────────────────────────────────────────────────────────────
